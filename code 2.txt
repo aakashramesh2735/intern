@@ -1,0 +1,181 @@
+# ============================================================
+# PHASE DETECTION + FEATURE EXTRACTION + CCI 
+# ============================================================
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
+import os
+
+# ------------------------------------------------------------
+# 0. OUTPUT DIRECTORY (CHANGE PATH IF NEEDED)
+# ------------------------------------------------------------
+OUTPUT_DIR = r"D:\project\outputs"   
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# ------------------------------------------------------------
+# 1. LOAD DATA (XLSX)
+# ------------------------------------------------------------
+data = pd.read_excel(r"D:\project\Inputs\dummy data.xlsx")
+
+print("Columns found:", data.columns)
+print(data.head())
+
+time = data["time"].values
+knee_angle = data["knee_angle"].values
+
+RF = data["RF"].values
+VL = data["VL"].values
+BF = data["BF"].values
+SEM = data["ST"].values
+
+# ------------------------------------------------------------
+# 2. COMPUTE ANGULAR VELOCITY
+# ------------------------------------------------------------
+dt = np.mean(np.diff(time))
+knee_velocity = np.gradient(knee_angle, dt)
+
+plt.figure(figsize=(10,4))
+plt.plot(time, knee_velocity)
+plt.xlabel("Time (s)")
+plt.ylabel("Angular Velocity (deg/s)")
+plt.title("Knee Angular Velocity")
+plt.show()
+
+# ------------------------------------------------------------
+# 3. DETECT GAIT CYCLES (KNEE EXTENSION PEAKS)
+# ------------------------------------------------------------
+peaks, _ = find_peaks(knee_angle, distance=0.5/dt)
+
+plt.figure(figsize=(10,4))
+plt.plot(time, knee_angle, label="Knee Angle")
+plt.plot(time[peaks], knee_angle[peaks], "ro", label="Extension Peaks")
+plt.xlabel("Time (s)")
+plt.ylabel("Knee Angle (deg)")
+plt.title("Detected Gait Cycles")
+plt.legend()
+plt.show()
+
+# ------------------------------------------------------------
+# 4. INITIALIZE PHASE ARRAY
+# ------------------------------------------------------------
+phase = np.zeros_like(knee_angle)
+
+# Phase labels:
+# 1 = Early stance
+# 2 = Mid stance
+# 3 = Late stance
+# 4 = Swing
+
+# ------------------------------------------------------------
+# 5. GAIT PHASE SEGMENTATION (4 PHASES)
+# ------------------------------------------------------------
+for i in range(len(peaks) - 1):
+
+    start = peaks[i]
+    end = peaks[i + 1]
+
+    p1 = start + int(0.15 * (end - start))
+    p2 = start + int(0.40 * (end - start))
+    p3 = start + int(0.60 * (end - start))
+
+    phase[start:p1] = 1
+    phase[p1:p2] = 2
+    phase[p2:p3] = 3
+    phase[p3:end] = 4
+
+# ------------------------------------------------------------
+# 6. VISUALIZE GAIT PHASES
+# ------------------------------------------------------------
+plt.figure(figsize=(10,4))
+plt.plot(time, knee_angle, color="black")
+
+plt.scatter(time[phase == 1], knee_angle[phase == 1], s=5, label="P1 Early Stance")
+plt.scatter(time[phase == 2], knee_angle[phase == 2], s=5, label="P2 Mid Stance")
+plt.scatter(time[phase == 3], knee_angle[phase == 3], s=5, label="P3 Late Stance")
+plt.scatter(time[phase == 4], knee_angle[phase == 4], s=5, label="P4 Swing")
+
+plt.xlabel("Time (s)")
+plt.ylabel("Knee Angle (deg)")
+plt.title("Gait Phase Segmentation")
+plt.legend(markerscale=3)
+plt.show()
+
+# ------------------------------------------------------------
+# 7. SAVE PHASE-LABELED DATA
+# ------------------------------------------------------------
+data["phase"] = phase
+data.to_excel(os.path.join(OUTPUT_DIR, "subject01_trial01_phases.xlsx"),
+              index=False)
+
+# ------------------------------------------------------------
+# 8. EXTENSOR & FLEXOR GROUPING
+# ------------------------------------------------------------
+E_ext = (RF + VL) / 2      # Quadriceps
+E_flex = (BF + SEM) / 2   # Hamstrings
+
+# ------------------------------------------------------------
+# 9. CO-CONTRACTION INDEX (CCI)
+# ------------------------------------------------------------
+epsilon = 1e-6
+CCI = (2 * np.minimum(E_ext, E_flex)) / (E_ext + E_flex + epsilon)
+
+# ------------------------------------------------------------
+# 10. FEATURE EXTRACTION (PHASE-WISE)
+# ------------------------------------------------------------
+features = []
+
+for p in [1, 2, 3, 4]:
+
+    idx = np.where(phase == p)[0]
+
+    feature_dict = {
+        "Phase": p,
+
+        "Mean_RF": np.mean(RF[idx]),
+        "Mean_VL": np.mean(VL[idx]),
+        "Mean_BF": np.mean(BF[idx]),
+        "Mean_SEM": np.mean(SEM[idx]),
+
+        "Peak_RF": np.max(RF[idx]),
+        "Peak_VL": np.max(VL[idx]),
+        "Peak_BF": np.max(BF[idx]),
+        "Peak_SEM": np.max(SEM[idx]),
+
+        "CCI_mean": np.mean(CCI[idx]),
+        "Ext_Flex_Ratio": np.mean(E_ext[idx] / (E_flex[idx] + epsilon)),
+
+        "Mean_Knee_Angle": np.mean(knee_angle[idx]),
+        "Phase_Duration": len(idx)
+    }
+
+    features.append(feature_dict)
+
+# ------------------------------------------------------------
+# 11. CREATE & SAVE FEATURE TABLE
+# ------------------------------------------------------------
+feature_df = pd.DataFrame(features)
+print("\nExtracted Features:\n", feature_df)
+
+feature_df.to_excel(os.path.join(OUTPUT_DIR,
+                    "subject01_trial01_features.xlsx"),
+                    index=False)
+
+# ------------------------------------------------------------
+# 12. MAIN RESULT PLOT (CCI vs GAIT PHASE)
+# ------------------------------------------------------------
+plt.figure(figsize=(6,4))
+plt.bar(feature_df["Phase"], feature_df["CCI_mean"])
+plt.xticks([1,2,3,4], ["P1","P2","P3","P4"])
+plt.xlabel("Gait Phase")
+plt.ylabel("Mean Co-Contraction Index")
+plt.title("Phase-Dependent Knee Co-Contraction")
+plt.show()
+
+print(f"\nAll outputs saved in folder: {OUTPUT_DIR}")
+
+# ============================================================
+# END OF SCRIPT
+# ============================================================

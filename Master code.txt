@@ -1,0 +1,133 @@
+# ============================================================
+# GUARANTEED GAIT FEATURE EXTRACTION (FILE-BASED)
+# EMG + IMU | Phase-wise | CCI-based
+# ============================================================
+
+import numpy as np
+import pandas as pd
+import os
+
+# ------------------------------------------------------------
+# PATHS (EDIT ONLY THESE)
+# ------------------------------------------------------------
+DATA_DIR = r"D:\project\Inputs\5 extracted subject data"
+OUTPUT_DIR = r"D:\project\outputs\Dummy data output seperate subjects"
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# ------------------------------------------------------------
+# PARAMETERS
+# ------------------------------------------------------------
+SAMPLES_PER_CYCLE = 100
+
+# ------------------------------------------------------------
+# MASTER STORAGE
+# ------------------------------------------------------------
+master_rows = []
+
+print("DATA FILES FOUND:", os.listdir(DATA_DIR))
+
+# ------------------------------------------------------------
+# LOOP THROUGH FILES (EACH FILE = SUBJECT)
+# ------------------------------------------------------------
+for file in sorted(os.listdir(DATA_DIR)):
+
+    if not file.endswith(".xlsx"):
+        continue
+
+    subject = file.replace(".xlsx", "")
+    file_path = os.path.join(DATA_DIR, file)
+
+    print("\n==============================")
+    print(f"Processing Subject: {subject}")
+
+    data = pd.read_excel(file_path)
+
+    if len(data) < SAMPLES_PER_CYCLE:
+        print("  ⚠️ File too short, skipped")
+        continue
+
+    # --------------------------------------------------------
+    # SIGNALS
+    # --------------------------------------------------------
+    knee_angle = data["knee_angle"].values
+    RF = data["RF"].values
+    VL = data["VL"].values
+    BF = data["BF"].values
+    ST = data["ST"].values
+
+    # --------------------------------------------------------
+    # MUSCLE GROUPING
+    # --------------------------------------------------------
+    E_ext = (RF + VL) / 2
+    E_flex = (BF + ST) / 2
+    epsilon = 1e-6
+    CCI = (2 * np.minimum(E_ext, E_flex)) / (E_ext + E_flex + epsilon)
+
+    # --------------------------------------------------------
+    # SAMPLE-BASED GAIT CYCLES
+    # --------------------------------------------------------
+    cycle_id = 0
+
+    for start in range(0, len(knee_angle) - SAMPLES_PER_CYCLE, SAMPLES_PER_CYCLE):
+
+        end = start + SAMPLES_PER_CYCLE
+        if end > len(knee_angle):
+            break
+
+        cycle_id += 1
+
+        p1 = start + int(0.15 * SAMPLES_PER_CYCLE)
+        p2 = start + int(0.40 * SAMPLES_PER_CYCLE)
+        p3 = start + int(0.60 * SAMPLES_PER_CYCLE)
+
+        phase_dict = {
+            1: np.arange(start, p1),
+            2: np.arange(p1, p2),
+            3: np.arange(p2, p3),
+            4: np.arange(p3, end)
+        }
+
+        for phase, idx in phase_dict.items():
+
+            if len(idx) == 0:
+                continue
+
+            master_rows.append({
+                "Subject": subject,
+                "Cycle_ID": cycle_id,
+                "Phase": phase,
+
+                "Mean_RF": np.mean(RF[idx]),
+                "Mean_VL": np.mean(VL[idx]),
+                "Mean_BF": np.mean(BF[idx]),
+                "Mean_ST": np.mean(ST[idx]),
+
+                "Peak_RF": np.max(RF[idx]),
+                "Peak_VL": np.max(VL[idx]),
+                "Peak_BF": np.max(BF[idx]),
+                "Peak_ST": np.max(ST[idx]),
+
+                "CCI_mean": np.mean(CCI[idx]),
+                "Ext_Flex_Ratio": np.mean(E_ext[idx] / (E_flex[idx] + epsilon)),
+                "Mean_Knee_Angle": np.mean(knee_angle[idx])
+            })
+
+    print(f"  Cycles processed: {cycle_id}")
+
+# ------------------------------------------------------------
+# SAVE OUTPUT
+# ------------------------------------------------------------
+master_df = pd.DataFrame(master_rows)
+
+output_path = os.path.join(
+    OUTPUT_DIR,
+    "MASTER_FEATURE_TABLE_FINAL.xlsx"
+)
+
+master_df.to_excel(output_path, index=False)
+
+print("\n===================================")
+print("✅ PROCESS COMPLETE")
+print(f"Total rows saved: {len(master_df)}")
+print(f"Output file: {output_path}")
